@@ -46,6 +46,7 @@ struct icon *on_input (struct pt *p);
 struct icon *on_output (struct pt *p);
 void link (struct icon *ip1, struct icon *ip2);
 void process_input (void);
+struct icon *overlap (struct icon *ip1);
 void mk_icon (int x, int y, char *name, int type);
 void draw (void);
 
@@ -160,6 +161,30 @@ process_input (void)
 	}
 }
 
+struct icon *
+overlap (struct icon *ip1)
+{
+	struct icon *ip2;
+
+	for (ip2 = first_input; ip2; ip2 = ip2->next) {
+		if (ip1->x2 < ip2->x1 || ip1->x1 > ip2->x2
+		    || ip1->y2 < ip2->y1 || ip1->y1 > ip2->y2)
+			continue;
+
+		return (ip2);
+	}
+
+	for (ip2 = first_output; ip2; ip2 = ip2->next) {
+		if (ip1->x2 < ip2->x1 || ip1->x1 > ip2->x2
+		    || ip1->y2 < ip2->y1 || ip1->y1 > ip2->y2)
+			continue;
+
+		return (ip2);
+	}
+
+	return (NULL);
+}
+
 void
 mk_icon (int x, int y, char *name, int type)
 {
@@ -174,6 +199,16 @@ mk_icon (int x, int y, char *name, int type)
 	ip->y1 = ip->rect.y - 5;
 	ip->x2 = ip->rect.x + ip->text->w + 5;
 	ip->y2 = ip->rect.y + ip->text->h + 5;
+
+	if (overlap (ip)) {
+		printf ("failed to create icon %s: overlap not allowed\n",
+			name);
+
+		SDL_FreeSurface (ip->text);
+		free (ip);
+		return;
+	}
+
 	ip->center.x = (ip->x1 + ip->x2) / 2;
 	ip->center.y = (ip->y1 + ip->y2) / 2;
 	ip->type = type;
