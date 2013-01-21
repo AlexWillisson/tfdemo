@@ -13,15 +13,21 @@
 #define GREEN(c) (((c) >> 8) & 0xff)
 #define BLUE(c) ((c) && 0xff)
 
+enum {
+	IN,
+	OUT
+};
+
 struct pt {
 	int x, y;
 };
 
 struct icon {
+	struct icon *next, *link;
 	SDL_Rect rect;
 	SDL_Surface *text;
 	struct pt center;
-	int x1, y1, x2, y2;
+	int x1, y1, x2, y2, type;
 };
 
 SDL_Surface *screen;
@@ -29,17 +35,72 @@ SDL_Color font_color;
 
 TTF_Font *font;
 
-struct icon icons[100];
+struct icon *first_input, *first_output;
 
-int dragging, linked, mousebutton[10];
+int mousebutton[10];
+struct icon *dragging, *linked;
 struct pt mouse, start;
 
+void *xcalloc (unsigned int a, unsigned int b);
+struct icon *on_input (struct pt *p);
+struct icon *on_output (struct pt *p);
+void link (struct icon *ip1, struct icon *ip2);
 void process_input (void);
+void mk_icon (int x, int y, char *name, int type);
 void draw (void);
+
+void *
+xcalloc (unsigned int a, unsigned int b)
+{
+	void *p;
+
+	if ((p = calloc (a, b)) == NULL) {
+		fprintf (stderr, "memory error\n");
+		exit (1);
+	}
+
+	return (p);
+}
+
+struct icon *
+on_input (struct pt *p)
+{
+	struct icon *ip;
+
+	for (ip = first_input; ip; ip = ip->next) {
+		if (p->x >= ip->x1 && p->x <= ip->x2
+		    && p->y >= ip->y1 && p->y <= ip->y2)
+			return (ip);
+	}
+
+	return (NULL);
+}
+
+struct icon *
+on_output (struct pt *p)
+{
+	struct icon *ip;
+
+	for (ip = first_output; ip; ip = ip->next) {
+		if (p->x >= ip->x1 && p->x <= ip->x2
+		    && p->y >= ip->y1 && p->y <= ip->y2)
+			return (ip);
+	}
+
+	return (NULL);
+}
+
+void
+link (struct icon *ip1, struct icon *ip2)
+{
+	ip1->link = ip2;
+	ip2->link = ip1;
+}
 
 void
 process_input (void)
 {
+	struct icon *ip;
 	SDL_Event event;
 	int key;
 
@@ -52,8 +113,15 @@ process_input (void)
 			if (key == SDLK_ESCAPE || key == 'q') {
 				exit (0);
 			} else if (key == 'r') {
-				linked = 0;
 				dragging = 0;
+
+				for (ip = first_input; ip; ip = ip->next) {
+					ip->link = 0;
+				}
+
+				for (ip = first_output; ip; ip = ip->next) {
+					ip->link = 0;
+				}
 			}
 			break;
 		case SDL_MOUSEMOTION:
@@ -67,13 +135,9 @@ process_input (void)
 
 			mousebutton[event.button.button] = 1;
 
-			if (mouse.x >= icons[0].x1
-			    && mouse.x <= icons[0].x2
-			    && mouse.y >= icons[0].y1
-			    && mouse.y <= icons[0].y2) {
-				dragging = 1;
+			dragging = on_input (&mouse);
+			if (dragging)
 				start = mouse;
-			}
 
 			break;
 		case SDL_MOUSEBUTTONUP:
@@ -83,12 +147,11 @@ process_input (void)
 
 			mousebutton[event.button.button] = 0;
 
-			if (mouse.x >= icons[1].x1
-			    && mouse.x <= icons[1].x2
-			    && mouse.y >= icons[1].y1
-			    && mouse.y <= icons[1].y2) {
-				dragging = 0;
-				linked = 1;
+			if (dragging) {
+				linked = on_output (&mouse);
+
+				if (linked)
+					link (dragging, linked);
 			}
 
 			dragging = 0;
@@ -98,26 +161,67 @@ process_input (void)
 }
 
 void
+mk_icon (int x, int y, char *name, int type)
+{
+	struct icon *ip;
+
+	ip = xcalloc (1, sizeof *ip);
+
+	ip->rect.x = x;
+	ip->rect.y = y;
+	ip->text = TTF_RenderText_Blended (font, name, font_color);
+	ip->x1 = ip->rect.x - 5;
+	ip->y1 = ip->rect.y - 5;
+	ip->x2 = ip->rect.x + ip->text->w + 5;
+	ip->y2 = ip->rect.y + ip->text->h + 5;
+	ip->center.x = (ip->x1 + ip->x2) / 2;
+	ip->center.y = (ip->y1 + ip->y2) / 2;
+	ip->type = type;
+
+	switch (type) {
+	case IN:
+		if (!first_input) {
+			first_input = ip;
+		} else {
+			ip->next = first_input;
+			first_input = ip;
+		}
+		break;
+	case OUT:
+		if (!first_output) {
+			first_output = ip;
+		} else {
+			ip->next = first_output;
+			first_output = ip;
+		}
+		break;
+	}
+}
+
+void
 draw (void)
 {
-	SDL_BlitSurface (icons[0].text, NULL, screen, &icons[0].rect);
-	SDL_BlitSurface (icons[1].text, NULL, screen, &icons[1].rect);
+	struct icon *ip;
 
-	roundedRectangleRGBA (screen, icons[0].x1, icons[0].y1,
-			      icons[0].x2, icons[0].y2,
-			      4, 0x00, 0x00, 0x00, 0xff);
+	for (ip = first_input; ip; ip = ip->next) {
+		SDL_BlitSurface (ip->text, NULL, screen, &ip->rect);
+		roundedRectangleRGBA (screen, ip->x1, ip->y1, ip->x2, ip->y2,
+				      4, 0x00, 0x00, 0x00, 0xff);
 
-	roundedRectangleRGBA (screen, icons[1].x1, icons[1].y1,
-			      icons[1].x2, icons[1].y2,
-			      4, 0x00, 0x00, 0x00, 0xff);
+		if (ip->link)
+			aalineRGBA (screen, ip->x2, ip->center.y,
+				    ip->link->x1, ip->link->center.y,
+				    0x88, 0x88, 0x88, 0xff);
+	}
+
+	for (ip = first_output; ip; ip = ip->next) {
+		SDL_BlitSurface (ip->text, NULL, screen, &ip->rect);
+		roundedRectangleRGBA (screen, ip->x1, ip->y1, ip->x2, ip->y2,
+				      4, 0x00, 0x00, 0x00, 0xff);
+	}
 
 	if (dragging)
 		aalineRGBA (screen, start.x, start.y, mouse.x, mouse.y,
-			    0x88, 0x88, 0x88, 0xff);
-
-	if (linked)
-		aalineRGBA (screen, icons[0].x2, icons[0].center.y,
-			    icons[1].x1, icons[1].center.y,
 			    0x88, 0x88, 0x88, 0xff);
 }
 
@@ -144,25 +248,9 @@ main (int argc, char **argv)
 	font_color.g = GREEN (FOREGROUND);
 	font_color.b = BLUE (FOREGROUND);
 
-	icons[0].rect.x = 50;
-	icons[0].rect.y = 50;
-	icons[0].text = TTF_RenderText_Blended (font, "Input", font_color);
-	icons[0].x1 = icons[0].rect.x - 5;
-	icons[0].y1 = icons[0].rect.y - 5;
-	icons[0].x2 = icons[0].rect.x + icons[0].text->w + 5;
-	icons[0].y2 = icons[0].rect.y + icons[0].text->h + 5;
-	icons[0].center.x = (icons[0].x1 + icons[0].x2) / 2;
-	icons[0].center.y = (icons[0].y1 + icons[0].y2) / 2;
-
-	icons[1].rect.x = 250;
-	icons[1].rect.y = 50;
-	icons[1].text = TTF_RenderText_Blended (font, "Output", font_color);
-	icons[1].x1 = icons[1].rect.x - 5;
-	icons[1].y1 = icons[1].rect.y - 5;
-	icons[1].x2 = icons[1].rect.x + icons[1].text->w + 5;
-	icons[1].y2 = icons[1].rect.y + icons[1].text->h + 5;
-	icons[1].center.x = (icons[1].x1 + icons[1].x2) / 2;
-	icons[1].center.y = (icons[1].y1 + icons[1].y2) / 2;
+	mk_icon (50, 50, "Input", IN);
+	mk_icon (250, 50, "Output", OUT);
+	mk_icon (250, 250, "Output 2", OUT);
 
 	while (1) {
 		process_input ();
