@@ -17,6 +17,8 @@
 #define GREEN(c) (((c) >> 8) & 0xff)
 #define BLUE(c) ((c) && 0xff)
 
+#define BIGRED 74
+
 enum {
 	IN,
 	OUT
@@ -31,7 +33,7 @@ struct icon {
 	SDL_Rect rect;
 	SDL_Surface *text;
 	struct pt center;
-	int x1, y1, x2, y2, type;
+	int x1, y1, x2, y2, type, keycode, value;
 };
 
 SDL_Surface *screen;
@@ -39,7 +41,7 @@ SDL_Color font_color;
 
 TTF_Font *font;
 
-struct icon *first_input, *first_output;
+struct icon *input_head, *output_head;
 
 int mousebutton[10], off, sock;
 struct icon *dragging, *linked;
@@ -51,7 +53,8 @@ struct icon *on_output (struct pt *p);
 void link_io (struct icon *ip1, struct icon *ip2);
 void process_input (void);
 struct icon *overlap (struct icon *ip1);
-void mk_icon (int x, int y, char *name, int type);
+void mk_in (int x, int y, char *name, int keycode);
+void mk_out (int x, int y, char *name);
 void draw (void);
 
 void
@@ -79,7 +82,7 @@ on_input (struct pt *p)
 {
 	struct icon *ip;
 
-	for (ip = first_input; ip; ip = ip->next) {
+	for (ip = input_head; ip; ip = ip->next) {
 		if (p->x >= ip->x1 && p->x <= ip->x2
 		    && p->y >= ip->y1 && p->y <= ip->y2)
 			return (ip);
@@ -93,7 +96,7 @@ on_output (struct pt *p)
 {
 	struct icon *ip;
 
-	for (ip = first_output; ip; ip = ip->next) {
+	for (ip = output_head; ip; ip = ip->next) {
 		if (p->x >= ip->x1 && p->x <= ip->x2
 		    && p->y >= ip->y1 && p->y <= ip->y2)
 			return (ip);
@@ -105,8 +108,28 @@ on_output (struct pt *p)
 void
 link_io (struct icon *ip1, struct icon *ip2)
 {
+	if (ip1->link && ip1->link->link == ip1)
+		ip1->link->link = 0;
+
+	if (ip2->link && ip2->link->link == ip2)
+		ip2->link->link = 0;
+
 	ip1->link = ip2;
 	ip2->link = ip1;
+}
+
+void
+process (char *buf)
+{
+	struct icon *ip;
+	int value, code;
+
+	if (sscanf (buf, "kbd0 %d %d", &value, &code) == 2) {
+		for (ip = input_head; ip; ip = ip->next) {
+			if (ip->keycode == code)
+				ip->value = value;
+		}
+	}
 }
 
 void
@@ -123,7 +146,7 @@ get_pushed (void)
 
 	if (ch == '\n') {
 		buf[off-1] = 0;
-		printf ("%s\n", buf);
+		process (buf);
 		off = 0;
 	}
 }
@@ -146,11 +169,11 @@ process_input (void)
 			} else if (key == 'r') {
 				dragging = 0;
 
-				for (ip = first_input; ip; ip = ip->next) {
+				for (ip = input_head; ip; ip = ip->next) {
 					ip->link = 0;
 				}
 
-				for (ip = first_output; ip; ip = ip->next) {
+				for (ip = output_head; ip; ip = ip->next) {
 					ip->link = 0;
 				}
 			}
@@ -196,7 +219,7 @@ overlap (struct icon *ip1)
 {
 	struct icon *ip2;
 
-	for (ip2 = first_input; ip2; ip2 = ip2->next) {
+	for (ip2 = input_head; ip2; ip2 = ip2->next) {
 		if (ip1->x2 < ip2->x1 || ip1->x1 > ip2->x2
 		    || ip1->y2 < ip2->y1 || ip1->y1 > ip2->y2)
 			continue;
@@ -204,7 +227,7 @@ overlap (struct icon *ip1)
 		return (ip2);
 	}
 
-	for (ip2 = first_output; ip2; ip2 = ip2->next) {
+	for (ip2 = output_head; ip2; ip2 = ip2->next) {
 		if (ip1->x2 < ip2->x1 || ip1->x1 > ip2->x2
 		    || ip1->y2 < ip2->y1 || ip1->y1 > ip2->y2)
 			continue;
@@ -216,7 +239,7 @@ overlap (struct icon *ip1)
 }
 
 void
-mk_icon (int x, int y, char *name, int type)
+mk_in (int x, int y, char *name, int keycode)
 {
 	struct icon *ip;
 
@@ -241,25 +264,50 @@ mk_icon (int x, int y, char *name, int type)
 
 	ip->center.x = (ip->x1 + ip->x2) / 2;
 	ip->center.y = (ip->y1 + ip->y2) / 2;
-	ip->type = type;
+	ip->type = IN;
+	ip->keycode = keycode;
 
-	switch (type) {
-	case IN:
-		if (!first_input) {
-			first_input = ip;
-		} else {
-			ip->next = first_input;
-			first_input = ip;
-		}
-		break;
-	case OUT:
-		if (!first_output) {
-			first_output = ip;
-		} else {
-			ip->next = first_output;
-			first_output = ip;
-		}
-		break;
+	if (!input_head) {
+		input_head = ip;
+	} else {
+		ip->next = input_head;
+		input_head = ip;
+	}
+}
+
+void
+mk_out (int x, int y, char *name)
+{
+	struct icon *ip;
+
+	ip = xcalloc (1, sizeof *ip);
+
+	ip->rect.x = x;
+	ip->rect.y = y;
+	ip->text = TTF_RenderText_Blended (font, name, font_color);
+	ip->x1 = ip->rect.x - 5;
+	ip->y1 = ip->rect.y - 5;
+	ip->x2 = ip->rect.x + ip->text->w + 5;
+	ip->y2 = ip->rect.y + ip->text->h + 5;
+
+	if (overlap (ip)) {
+		printf ("failed to create icon %s: overlap not allowed\n",
+			name);
+
+		SDL_FreeSurface (ip->text);
+		free (ip);
+		return;
+	}
+
+	ip->center.x = (ip->x1 + ip->x2) / 2;
+	ip->center.y = (ip->y1 + ip->y2) / 2;
+	ip->type = OUT;
+
+	if (!output_head) {
+		output_head = ip;
+	} else {
+		ip->next = output_head;
+		output_head = ip;
 	}
 }
 
@@ -268,10 +316,13 @@ draw (void)
 {
 	struct icon *ip;
 
-	for (ip = first_input; ip; ip = ip->next) {
+	for (ip = input_head; ip; ip = ip->next) {
 		SDL_BlitSurface (ip->text, NULL, screen, &ip->rect);
 		roundedRectangleRGBA (screen, ip->x1, ip->y1, ip->x2, ip->y2,
 				      4, 0x00, 0x00, 0x00, 0xff);
+		if (ip->value)
+			rectangleRGBA (screen, ip->x1, ip->y1, ip->x2, ip->y2,
+				       0xff, 0x00, 0x00, 0xff);
 
 		if (ip->link)
 			aalineRGBA (screen, ip->x2, ip->center.y,
@@ -279,10 +330,14 @@ draw (void)
 				    0x88, 0x88, 0x88, 0xff);
 	}
 
-	for (ip = first_output; ip; ip = ip->next) {
+	for (ip = output_head; ip; ip = ip->next) {
 		SDL_BlitSurface (ip->text, NULL, screen, &ip->rect);
 		roundedRectangleRGBA (screen, ip->x1, ip->y1, ip->x2, ip->y2,
 				      4, 0x00, 0x00, 0x00, 0xff);
+
+		if (ip->link && ip->link->value)
+			rectangleRGBA (screen, ip->x1, ip->y1, ip->x2, ip->y2,
+				       0xff, 0x00, 0x00, 0xff);
 	}
 
 	if (dragging)
@@ -360,9 +415,9 @@ main (int argc, char **argv)
 	font_color.g = GREEN (FOREGROUND);
 	font_color.b = BLUE (FOREGROUND);
 
-	mk_icon (50, 50, "Input", IN);
-	mk_icon (250, 50, "Output", OUT);
-	mk_icon (250, 250, "Output 2", OUT);
+	mk_in (50, 50, "Big Red", BIGRED);
+	mk_out (250, 50, "Output");
+	mk_out (250, 250, "Output 2");
 
 	off = 0;
 	while (1) {
