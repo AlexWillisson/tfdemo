@@ -1,4 +1,8 @@
 #include <stdio.h>
+#include <unistd.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 #include <SDL.h>
 #include <SDL_gfxPrimitives.h>
 #include <SDL_ttf.h>
@@ -37,18 +41,25 @@ TTF_Font *font;
 
 struct icon *first_input, *first_output;
 
-int mousebutton[10];
+int mousebutton[10], off, sock;
 struct icon *dragging, *linked;
 struct pt mouse, start;
 
 void *xcalloc (unsigned int a, unsigned int b);
 struct icon *on_input (struct pt *p);
 struct icon *on_output (struct pt *p);
-void link (struct icon *ip1, struct icon *ip2);
+void link_io (struct icon *ip1, struct icon *ip2);
 void process_input (void);
 struct icon *overlap (struct icon *ip1);
 void mk_icon (int x, int y, char *name, int type);
 void draw (void);
+
+void
+usage (void)
+{
+	printf ("usage: demo hostname\n");
+	exit (1);
+}
 
 void *
 xcalloc (unsigned int a, unsigned int b)
@@ -92,10 +103,29 @@ on_output (struct pt *p)
 }
 
 void
-link (struct icon *ip1, struct icon *ip2)
+link_io (struct icon *ip1, struct icon *ip2)
 {
 	ip1->link = ip2;
 	ip2->link = ip1;
+}
+
+void
+get_pushed (void)
+{
+	char ch, buf[1000];
+
+	if (read (sock, &ch, 1) != 1) {
+		printf ("error reading\n");
+		exit (1);
+	}
+
+	buf[off++] = ch;
+
+	if (ch == '\n') {
+		buf[off-1] = 0;
+		printf ("%s\n", buf);
+		off = 0;
+	}
 }
 
 void
@@ -152,7 +182,7 @@ process_input (void)
 				linked = on_output (&mouse);
 
 				if (linked)
-					link (dragging, linked);
+					link_io (dragging, linked);
 			}
 
 			dragging = 0;
@@ -263,6 +293,53 @@ draw (void)
 int
 main (int argc, char **argv)
 {
+	struct sockaddr_in addr;
+	struct hostent *hp;
+	struct timeval tv;
+	int c, win, port, maxfd;
+	char *hostname;
+	fd_set rset, wset;
+
+	while ((c = getopt (argc, argv, "")) != EOF) {
+		switch (c) {
+		default:
+			usage ();
+		}
+	}
+
+	if (optind >= argc)
+		usage ();
+
+	hostname = argv[optind++];
+
+	if (optind != argc)
+		usage ();
+
+	hp = gethostbyname (hostname);
+	if (hp == NULL) {
+		printf ("%s not found\n", hostname);
+		exit (1);
+	}
+
+	sock = socket (AF_INET, SOCK_STREAM, 0);
+	win = 0;
+	for (port = 9195; port <= 9200; port++) {
+		memset (&addr, 0, sizeof addr);
+		addr.sin_family = AF_INET;
+		memcpy (&addr.sin_addr, hp->h_addr, sizeof addr.sin_addr);
+		addr.sin_port = htons (port);
+		if (connect (sock,
+			     (struct sockaddr *) &addr, sizeof addr) >= 0) {
+			win = 1;
+			break;
+		}
+	}
+
+	if ( ! win) {
+		printf ("cannot connect to %s\n", hostname);
+		exit (1);
+	}
+
 	if (SDL_Init (SDL_INIT_VIDEO) != 0) {
 		printf ("unable to initialize SDL: %s\n", SDL_GetError ());
 		return (1);
@@ -287,8 +364,29 @@ main (int argc, char **argv)
 	mk_icon (250, 50, "Output", OUT);
 	mk_icon (250, 250, "Output 2", OUT);
 
+	off = 0;
 	while (1) {
+		maxfd = 0;
+
+		FD_ZERO (&rset);
+		FD_ZERO (&wset);
+
+		if (sock > maxfd)
+			maxfd = sock;
+		FD_SET (sock, &rset);
+
+		tv.tv_sec = 0;
+		tv.tv_usec = 10000;
+		if (select (maxfd + 1, &rset, &wset, NULL, &tv) < 0) {
+			printf ("select error\n");
+			exit (1);
+		}
+
+		if (FD_ISSET (sock, &rset))
+			get_pushed ();
+
 		process_input ();
+
 		SDL_FillRect (screen, NULL, BACKGROUND);
 		draw ();
 		SDL_Flip (screen);
