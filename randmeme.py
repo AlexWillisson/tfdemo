@@ -9,4 +9,4 @@ signal.signal (signal.SIGALRM, sigs)
 
 f = random.choice (os.listdir ("/home/atw/tfdemo/memes"))
 
-os.system ("eog /home/atw/tfdemo/memes/" + f + "& sleep 3; kill $!")
+os.system ("eog /home/atw/tfdemo/memes/" + f + "& sleep 3; kill $! 2>/dev/null")

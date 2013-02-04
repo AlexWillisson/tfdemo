@@ -10,12 +10,13 @@
 #include <SDL_image.h>
 #include <time.h>
 #include <signal.h>
+#include <sys/time.h>
 
 #define WIDTH 1280
 #define HEIGHT 960
 #define BACKGROUND 0xffffff
 #define FOREGROUND 0x000000
-#define FONT "/usr/share/fonts/truetype/ttf-dejavu/DejaVuSansMono.ttf"
+#define FONT "/usr/share/fonts/truetype/ttf-dejavu/DejaVuSansMono-Bold.ttf"
 #define RED(c) (((c) >> 16) && 0xff)
 #define GREEN(c) (((c) >> 8) & 0xff)
 #define BLUE(c) ((c) && 0xff)
@@ -43,7 +44,10 @@
 
 enum {
 	NOTHING,
-	MEME
+	MEME,
+	COUNTDOWN,
+	NOTIFY,
+	SEQ
 };
 
 enum {
@@ -63,16 +67,34 @@ struct icon {
 	int x1, y1, x2, y2, type, keycode, value, used, output;
 };
 
-SDL_Surface *screen;
+SDL_Surface *screen, *counter_text[5];
 SDL_Color font_color;
+SDL_Rect counter_rect;
 
 TTF_Font *font;
 
 struct icon *input_head, *output_head;
 
-int mousebutton[10], off, sock;
+int mousebutton[10], off, sock, counter;
+double counter_last;
 struct icon *dragging, *linked;
 struct pt mouse, start;
+
+int seq_idx;
+char *seq[11] = {
+	"Hey! You should do that again.",
+	"Yes, that.",
+	"This is awesome, isn't it?",
+	"I hope you didn't start reading this in the middle.",
+	"You'll just have to wait until it loops to see what you missed.",
+	"Still hitting the button, are you?",
+	"Well, I guess I can't tell",
+	"Since this just continually loops",
+	"And has no memory of who pressed the button",
+	"Oh well.",
+	"So long, and thanks for all the fish"
+};
+	
 
 void *xcalloc (unsigned int a, unsigned int b);
 struct icon *on_input (struct pt *p);
@@ -102,6 +124,14 @@ xcalloc (unsigned int a, unsigned int b)
 	}
 
 	return (p);
+}
+
+double
+get_secs (void)
+{
+	struct timeval tv;
+	gettimeofday (&tv, NULL);
+	return (tv.tv_sec + tv.tv_usec / 1e6);
 }
 
 struct icon *
@@ -205,6 +235,11 @@ process_input (void)
 				for (ip = output_head; ip; ip = ip->next) {
 					ip->link = 0;
 				}
+			} else if (key == 'c') {
+				for (ip = input_head; ip; ip = ip->next) {
+					ip->value = 0;
+					ip->used = 1;
+				}
 			}
 			break;
 		case SDL_MOUSEMOTION:
@@ -244,13 +279,21 @@ process_input (void)
 }
 
 void
-random_meme (void)
+sequence_print (void)
 {
-	int pid;
+	char cmd[1000];
+	int idx;
 
-	if ((pid = fork ()) == 0) {
-		exit (system ("/home/atw/tfdemo/randmeme.py"));
+	idx = seq_idx;
+	seq_idx++;
+
+	if (fork () == 0) {
+		sprintf (cmd, "notify-send \"%s\"", seq[idx]);
+		exit (system (cmd));
 	}
+
+	if (seq_idx > 11)
+		seq_idx = 0;
 }
 
 void
@@ -259,8 +302,25 @@ selector (struct icon *ip)
 	if (ip->link) {
 		switch (ip->link->output) {
 		case MEME:
-			printf ("selecting %d for %d\n", MEME, ip->keycode);
-			random_meme ();
+			if (fork () == 0) {
+				exit (system ("/home/atw/tfdemo/randmeme.py"
+					      " 2>/dev/null"));
+			}
+			ip->used = 1;
+			break;
+		case COUNTDOWN:
+			counter = 5;
+			counter_last = get_secs ();
+			ip->used = 1;
+			break;
+		case NOTIFY:
+			if (fork () == 0) {
+				exit (system ("notify-send \"Hello, world!\" \"The magic words are 'squeamish ossifrage'\""));
+			}
+			ip->used = 1;
+			break;
+		case SEQ:
+			sequence_print ();
 			ip->used = 1;
 			break;
 		default:
@@ -384,9 +444,54 @@ mk_out (int x, int y, char *name, int type)
 }
 
 void
+mk_counter (void)
+{
+	int idx;
+	SDL_Color color;
+	TTF_Font *huge_font;
+	char num[10];
+
+	color.r = 0xff;
+	color.g = 0x0;
+	color.b = 0x0;
+
+	huge_font = TTF_OpenFont (FONT, 500);
+
+	for (idx = 1; idx <= 5; idx++) {
+		sprintf (num, "%d", idx);
+		counter_text[idx] = TTF_RenderText_Blended (huge_font,
+							    num, color);
+		counter_rect.x = (WIDTH - counter_text[idx]->w) / 2;
+		counter_rect.y = (HEIGHT - counter_text[idx]->h) / 2;
+	}
+}
+
+void
+countdown (void)
+{
+	double now;
+
+	now = get_secs ();
+
+	if (now - counter_last >= 1) {
+		counter -= 1;
+		counter_last = now;
+	}
+
+	if (counter) {
+		SDL_BlitSurface (counter_text[counter], NULL, screen, &counter_rect);
+	}
+}
+
+void
 draw (void)
 {
 	struct icon *ip;
+
+	if (counter) {
+		countdown ();
+		return;
+	}
 
 	for (ip = input_head; ip; ip = ip->next) {
 		SDL_BlitSurface (ip->text, NULL, screen, &ip->rect);
@@ -494,7 +599,7 @@ main (int argc, char **argv)
 	mk_in (50, 115, "Red Missile", MISSILE_RED);
 	mk_in (50, 165, "Knife Switch Up", KNIFE_UP);
 	mk_in (50, 215, "Knife Switch Down", KNIFE_DOWN);
-	mk_in (50, 265, "Joystick left", JOY_LEFT);
+	mk_in (50, 265, "Joystick Left", JOY_LEFT);
 	mk_in (50, 315, "Joystick Right", JOY_RIGHT);
 	mk_in (50, 365, "Joystick Down", JOY_DOWN);
 	mk_in (50, 415, "Joystick Up", JOY_UP);
@@ -511,6 +616,13 @@ main (int argc, char **argv)
 	mk_in (50, 965, "Keyboard 7", KEY_6);
 
 	mk_out (800, 50, "Random", MEME);
+	mk_out (800, 100, "Countdown", COUNTDOWN);
+	mk_out (800, 150, "Desktop Alert", NOTIFY);
+	mk_out (800, 200, "Sequence", SEQ);
+
+	mk_counter ();
+
+	seq_idx = 0;
 
 	off = 0;
 	while (1) {
