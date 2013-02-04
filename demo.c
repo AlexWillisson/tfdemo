@@ -47,7 +47,8 @@ enum {
 	MEME,
 	COUNTDOWN,
 	NOTIFY,
-	SEQ
+	SEQ,
+	MAIL
 };
 
 enum {
@@ -221,6 +222,7 @@ process_input (void)
 		key = event.key.keysym.sym;
 		switch (event.type) {
 		case SDL_QUIT:
+			SDL_Quit ();
 			exit (0);
 		case SDL_KEYUP:
 			if (key == SDLK_ESCAPE || key == 'q') {
@@ -323,6 +325,12 @@ selector (struct icon *ip)
 			sequence_print ();
 			ip->used = 1;
 			break;
+		/* case MAIL: */
+		/* 	if (fork () == 0) { */
+		/* 		exit (system ("ssh w 'echo email sent via techfair openkb demo | sendmail -f atw@willisson.org alex.willisson@gmail.com'")); */
+		/* 	} */
+		/* 	ip->used = 1; */
+		/* 	break; */
 		default:
 			break;
 		}
@@ -581,6 +589,8 @@ main (int argc, char **argv)
 
 	screen = SDL_SetVideoMode (WIDTH, HEIGHT, 32,
 				   SDL_HWSURFACE | SDL_DOUBLEBUF);
+	/* screen = SDL_SetVideoMode (WIDTH, HEIGHT, 32, */
+	/* 			   SDL_HWSURFACE | SDL_DOUBLEBUF | SDL_FULLSCREEN); */
 
 	if (screen == NULL) {
 		printf ("unable to set video mode: %s\n", SDL_GetError ());
@@ -619,6 +629,7 @@ main (int argc, char **argv)
 	mk_out (800, 100, "Countdown", COUNTDOWN);
 	mk_out (800, 150, "Desktop Alert", NOTIFY);
 	mk_out (800, 200, "Sequence", SEQ);
+	/* mk_out (800, 250, "Email", MAIL); */
 
 	mk_counter ();
 
