@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -7,9 +8,11 @@
 #include <SDL_gfxPrimitives.h>
 #include <SDL_ttf.h>
 #include <SDL_image.h>
+#include <time.h>
+#include <signal.h>
 
-#define WIDTH 640
-#define HEIGHT 480
+#define WIDTH 1280
+#define HEIGHT 960
 #define BACKGROUND 0xffffff
 #define FOREGROUND 0x000000
 #define FONT "/usr/share/fonts/truetype/ttf-dejavu/DejaVuSansMono.ttf"
@@ -17,7 +20,31 @@
 #define GREEN(c) (((c) >> 8) & 0xff)
 #define BLUE(c) ((c) && 0xff)
 
-#define BIGRED 74
+#define BIGRED 121
+#define MISSILE_OJ 92
+#define MISSILE_RED 42
+#define KNIFE_UP 123
+#define KNIFE_DOWN 54
+#define JOY_LEFT 19
+#define JOY_RIGHT 20
+#define JOY_DOWN 18
+#define JOY_UP 21
+#define ARCADE_GREEN 82
+#define ARCADE_RED 8
+#define ARCADE_BLACK 96
+#define ARCADE_YELLOW 83
+#define KEY_0 79
+#define KEY_1 80
+#define KEY_2 81
+#define KEY_3 77
+#define KEY_4 31
+#define KEY_5 53
+#define KEY_6 37
+
+enum {
+	NOTHING,
+	MEME
+};
 
 enum {
 	IN,
@@ -33,7 +60,7 @@ struct icon {
 	SDL_Rect rect;
 	SDL_Surface *text;
 	struct pt center;
-	int x1, y1, x2, y2, type, keycode, value;
+	int x1, y1, x2, y2, type, keycode, value, used, output;
 };
 
 SDL_Surface *screen;
@@ -54,7 +81,7 @@ void link_io (struct icon *ip1, struct icon *ip2);
 void process_input (void);
 struct icon *overlap (struct icon *ip1);
 void mk_in (int x, int y, char *name, int keycode);
-void mk_out (int x, int y, char *name);
+void mk_out (int x, int y, char *name, int type);
 void draw (void);
 
 void
@@ -126,8 +153,10 @@ process (char *buf)
 
 	if (sscanf (buf, "kbd0 %d %d", &value, &code) == 2) {
 		for (ip = input_head; ip; ip = ip->next) {
-			if (ip->keycode == code)
+			if (ip->keycode == code) {
 				ip->value = value;
+				ip->used = 0;
+			}
 		}
 	}
 }
@@ -214,6 +243,48 @@ process_input (void)
 	}
 }
 
+void
+random_meme (void)
+{
+	int pid;
+
+	if ((pid = fork ()) == 0) {
+		exit (system ("/home/atw/tfdemo/randmeme.py"));
+	}
+}
+
+void
+selector (struct icon *ip)
+{
+	if (ip->link) {
+		switch (ip->link->output) {
+		case MEME:
+			printf ("selecting %d for %d\n", MEME, ip->keycode);
+			random_meme ();
+			ip->used = 1;
+			break;
+		default:
+			break;
+		}
+	}
+}
+
+void
+process_buttons (void)
+{
+	struct icon *ip;
+
+	for (ip = input_head; ip; ip = ip->next) {
+		if (ip->value && ip->used == 0) {
+			switch (ip->keycode) {
+			default:
+				selector (ip);
+				break;
+			}
+		}
+	}
+}
+
 struct icon *
 overlap (struct icon *ip1)
 {
@@ -276,7 +347,7 @@ mk_in (int x, int y, char *name, int keycode)
 }
 
 void
-mk_out (int x, int y, char *name)
+mk_out (int x, int y, char *name, int type)
 {
 	struct icon *ip;
 
@@ -289,6 +360,7 @@ mk_out (int x, int y, char *name)
 	ip->y1 = ip->rect.y - 5;
 	ip->x2 = ip->rect.x + ip->text->w + 5;
 	ip->y2 = ip->rect.y + ip->text->h + 5;
+	ip->output = type;
 
 	if (overlap (ip)) {
 		printf ("failed to create icon %s: overlap not allowed\n",
@@ -370,6 +442,8 @@ main (int argc, char **argv)
 	if (optind != argc)
 		usage ();
 
+	srand (time (NULL));
+
 	hp = gethostbyname (hostname);
 	if (hp == NULL) {
 		printf ("%s not found\n", hostname);
@@ -415,9 +489,28 @@ main (int argc, char **argv)
 	font_color.g = GREEN (FOREGROUND);
 	font_color.b = BLUE (FOREGROUND);
 
-	mk_in (50, 50, "Big Red", BIGRED);
-	mk_out (250, 50, "Output");
-	mk_out (250, 250, "Output 2");
+	mk_in (50, 15, "Big Red", BIGRED);
+	mk_in (50, 65, "Orange Missile", MISSILE_OJ);
+	mk_in (50, 115, "Red Missile", MISSILE_RED);
+	mk_in (50, 165, "Knife Switch Up", KNIFE_UP);
+	mk_in (50, 215, "Knife Switch Down", KNIFE_DOWN);
+	mk_in (50, 265, "Joystick left", JOY_LEFT);
+	mk_in (50, 315, "Joystick Right", JOY_RIGHT);
+	mk_in (50, 365, "Joystick Down", JOY_DOWN);
+	mk_in (50, 415, "Joystick Up", JOY_UP);
+	mk_in (50, 465, "Arcade Green", ARCADE_GREEN);
+	mk_in (50, 515, "Arcade Red", ARCADE_RED);
+	mk_in (50, 565, "Arcade Black", ARCADE_BLACK);
+	mk_in (50, 615, "Arcade Yellow", ARCADE_YELLOW);
+	mk_in (50, 665, "Keyboard 1", KEY_0);
+	mk_in (50, 715, "Keyboard 2", KEY_1);
+	mk_in (50, 765, "Keyboard 3", KEY_2);
+	mk_in (50, 815, "Keyboard 4", KEY_3);
+	mk_in (50, 865, "Keyboard 5", KEY_4);
+	mk_in (50, 915, "Keyboard 6", KEY_5);
+	mk_in (50, 965, "Keyboard 7", KEY_6);
+
+	mk_out (800, 50, "Random", MEME);
 
 	off = 0;
 	while (1) {
@@ -441,6 +534,7 @@ main (int argc, char **argv)
 			get_pushed ();
 
 		process_input ();
+		process_buttons ();
 
 		SDL_FillRect (screen, NULL, BACKGROUND);
 		draw ();
